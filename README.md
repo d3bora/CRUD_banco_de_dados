@@ -1,2 +1,3 @@
-# CRUD_banco_de_dados
-A aplicação consiste num programa que efetua o CRUD (insert,delete, update e leitura) de três tabelas/estrutura do banco de dados.
+INSTALE COM NPM INSTALL
+PARA RODAR, DIGITE O COMANDO "NPM RUN DEV"
+PARA GERAR UM BUILD, DIGITE "NPM RUN BUILD" + "NPM RUN START"
