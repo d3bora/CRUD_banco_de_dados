@@ -1,232 +1,213 @@
-import { IVitima } from "../controllers/vitimaController";
-import { pool } from "../database";
+import { Collection, ObjectId } from "mongodb";
+import { getDb } from "../database";
 
-// Interface para dados do usuário
-interface IUsuario {
+export interface IVitima {
+  _id?: string;
   cpf: string;
-  telefone: string | null;
+  telefone?: string;
   senha: string;
   login: string;
-  email: string | null;
-  tipo_usuario: 'vítima' | 'profissional';
-  nome: string | null;
-  sobrenome: string | null;
-  data_cadastro: Date | null;
+  email?: string;
+  tipo_usuario: 'vítima';
+  nome: string;
+  sobrenome: string;
+  data_cadastro: Date;
+  endereco: string;
+  data_nascimento: Date;
+  idade: number;
+  escolaridade: string;
+  etnia: string;
+  ativo?: boolean;
+  created_at?: Date;
+  updated_at?: Date;
 }
 
-// Interface para dados da vítima
-interface IVitimaCreate {
-  endereco: string | null;
-  data_nascimento: Date | null;
-  idade: number | null;
-  escolaridade: string | null;
-  etnia: string | null;
+export interface IVitimaUpdate {
+  telefone?: string;
+  email?: string;
+  nome?: string;
+  sobrenome?: string;
+  endereco?: string;
+  data_nascimento?: Date;
+  idade?: number;
+  escolaridade?: string;
+  etnia?: string;
 }
 
-const vitimaService = {
-  createVitima: async (
-    usuarioData: IUsuario,
-    vitimaData: IVitimaCreate
-  ): Promise<IVitima> => {
-    const client = await pool.connect();
-    
+class VitimaService {
+  private collection: Collection | null = null;
+
+  private getCollection(): Collection {
+    if (!this.collection) {
+      this.collection = getDb().collection("usuarios");
+    }
+    return this.collection;
+  }
+
+  async createVitima(vitimaData: IVitima): Promise<IVitima> {
     try {
-      // Iniciar transação
-      await client.query('BEGIN');
+      // Verificar se CPF já existe
+      const existingVitima = await this.getCollection().findOne({ cpf: vitimaData.cpf });
+      if (existingVitima) {
+        throw new Error("CPF já cadastrado no sistema");
+      }
 
-      // 1. Criar usuário primeiro
-      const usuarioResult = await client.query(
-        `INSERT INTO usuario (cpf, telefone, senha, login, email, tipo_usuario, nome, sobrenome, data_cadastro)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id_usuario`,
-        [
-          usuarioData.cpf,
-          usuarioData.telefone,
-          usuarioData.senha,
-          usuarioData.login,
-          usuarioData.email,
-          usuarioData.tipo_usuario,
-          usuarioData.nome,
-          usuarioData.sobrenome,
-          usuarioData.data_cadastro
-        ]
-      );
+      // Verificar se login já existe
+      const existingLogin = await this.getCollection().findOne({ login: vitimaData.login });
+      if (existingLogin) {
+        throw new Error("Login já cadastrado no sistema");
+      }
 
-      const userId = usuarioResult.rows[0].id_usuario;
+      // Verificar se email já existe (se fornecido)
+      if (vitimaData.email) {
+        const existingEmail = await this.getCollection().findOne({ email: vitimaData.email });
+        if (existingEmail) {
+          throw new Error("Email já cadastrado no sistema");
+        }
+      }
 
-      // 2. Criar vítima usando o ID do usuário
-      const vitimaResult = await client.query(
-        `INSERT INTO vitima (id_vitima, endereco, data_nascimento, idade, escolaridade, etnia)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING *`,
-        [
-          userId,
-          vitimaData.endereco,
-          vitimaData.data_nascimento,
-          vitimaData.idade,
-          vitimaData.escolaridade,
-          vitimaData.etnia
-        ]
-      );
+      // 1. Criar usuário na coleção usuarios (dados básicos)
+      const usuarioData = {
+        cpf: vitimaData.cpf,
+        telefone: vitimaData.telefone,
+        senha: vitimaData.senha,
+        login: vitimaData.login,
+        email: vitimaData.email,
+        tipo_usuario: vitimaData.tipo_usuario,
+        nome: vitimaData.nome,
+        sobrenome: vitimaData.sobrenome,
+        data_cadastro: vitimaData.data_cadastro,
+        ativo: vitimaData.ativo,
+        created_at: vitimaData.created_at,
+        updated_at: vitimaData.updated_at
+      };
 
-      // Commit da transação
-      await client.query('COMMIT');
+      const usuarioResult = await this.getCollection().insertOne(usuarioData);
 
-      return vitimaResult.rows[0];
+      // 2. Criar documento na coleção vitimas (dados específicos)
+      const vitimaCollection = getDb().collection("vitimas");
+      const vitimaDoc = {
+        usuario_id: usuarioResult.insertedId,
+        endereco: vitimaData.endereco,
+        data_nascimento: vitimaData.data_nascimento,
+        idade: vitimaData.idade,
+        escolaridade: vitimaData.escolaridade,
+        etnia: vitimaData.etnia
+      };
+
+      await vitimaCollection.insertOne(vitimaDoc);
+
+      // Retornar dados completos da vítima
+      return { 
+        ...vitimaData, 
+        _id: usuarioResult.insertedId.toString() 
+      };
     } catch (error) {
-      // Rollback em caso de erro
-      await client.query('ROLLBACK');
       throw error;
-    } finally {
-      client.release();
-    }
-  },
-
-  listVitimaById: async (id: number): Promise<IVitima | undefined> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `SELECT * FROM vitima WHERE id_vitima = $1`,
-        [id]
-      );
-
-      return result.rows.length > 0 ? result.rows[0] : undefined;
-    } finally {
-      client.release();
-    }
-  },
-
-  updateVitima: async (
-    id: number,
-    endereco: string | null,
-    data_nascimento: Date | null,
-    idade: number | null,
-    escolaridade: string | null,
-    etnia: string | null
-  ): Promise<IVitima | undefined> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `UPDATE vitima 
-         SET endereco = $1, data_nascimento = $2, idade = $3, escolaridade = $4, etnia = $5
-         WHERE id_vitima = $6
-         RETURNING *`,
-        [endereco, data_nascimento, idade, escolaridade, etnia, id]
-      );
-
-      return result.rows.length > 0 ? result.rows[0] : undefined;
-    } finally {
-      client.release();
-    }
-  },
-
-  deleteVitima: async (id: number): Promise<boolean> => {
-    const client = await pool.connect();
-    
-    try {
-      // Iniciar transação para deletar usuário + vítima
-      await client.query('BEGIN');
-
-      // 1. Deletar vítima primeiro (devido à chave estrangeira)
-      const vitimaResult = await client.query(
-        `DELETE FROM vitima WHERE id_vitima = $1`,
-        [id]
-      );
-
-      // 2. Deletar usuário
-      const usuarioResult = await client.query(
-        `DELETE FROM usuario WHERE id_usuario = $1`,
-        [id]
-      );
-
-      // Commit da transação
-      await client.query('COMMIT');
-
-      return (vitimaResult.rowCount || 0) > 0;
-    } catch (error) {
-      // Rollback em caso de erro
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  },
-
-  listAllVitimas: async (): Promise<IVitima[]> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `SELECT * FROM vitima`
-      );
-
-      return result.rows;
-    } finally {
-      client.release();
-    }
-  },
-
-  getVitimaByEscolaridade: async (escolaridade: string): Promise<IVitima[]> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `SELECT * FROM vitima WHERE escolaridade = $1`,
-        [escolaridade]
-      );
-
-      return result.rows;
-    } finally {
-      client.release();
-    }
-  },
-
-  getVitimaByEtnia: async (etnia: string): Promise<IVitima[]> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `SELECT * FROM vitima WHERE etnia = $1`,
-        [etnia]
-      );
-
-      return result.rows;
-    } finally {
-      client.release();
-    }
-  },
-
-  updateVitimaEndereco: async (id: number, endereco: string): Promise<IVitima | undefined> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `UPDATE vitima SET endereco = $1 WHERE id_vitima = $2 RETURNING *`,
-        [endereco, id]
-      );
-
-      return result.rows.length > 0 ? result.rows[0] : undefined;
-    } finally {
-      client.release();
-    }
-  },
-
-  updateVitimaEscolaridade: async (id: number, escolaridade: string): Promise<IVitima | undefined> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `UPDATE vitima SET escolaridade = $1 WHERE id_vitima = $2 RETURNING *`,
-        [escolaridade, id]
-      );
-
-      return result.rows.length > 0 ? result.rows[0] : undefined;
-    } finally {
-      client.release();
     }
   }
-};
 
-export default vitimaService;
+  async listVitimaById(id: string): Promise<IVitima | undefined> {
+    try {
+      // Buscar dados específicos da vítima na coleção vitimas
+      const vitimaCollection = getDb().collection("vitimas");
+      const vitimaData = await vitimaCollection.findOne({ usuario_id: new ObjectId(id) });
+      
+      if (!vitimaData) return undefined;
+
+      // Retornar apenas os dados da vítima
+      return {
+        _id: vitimaData.usuario_id.toString(),
+        endereco: vitimaData.endereco,
+        data_nascimento: vitimaData.data_nascimento,
+        idade: vitimaData.idade,
+        escolaridade: vitimaData.escolaridade,
+        etnia: vitimaData.etnia
+      } as IVitima;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async updateVitima(id: string, updateData: IVitimaUpdate): Promise<IVitima | undefined> {
+    try {
+      const updateFields: any = { updated_at: new Date() };
+      const vitimaUpdateFields: any = {};
+
+      // Atualizar campos básicos do usuário
+      if (updateData.telefone !== undefined) updateFields.telefone = updateData.telefone;
+      if (updateData.email !== undefined) updateFields.email = updateData.email;
+      if (updateData.nome !== undefined) updateFields.nome = updateData.nome;
+      if (updateData.sobrenome !== undefined) updateFields.sobrenome = updateData.sobrenome;
+
+      // Atualizar dados específicos da vítima
+      if (updateData.endereco !== undefined) vitimaUpdateFields.endereco = updateData.endereco;
+      if (updateData.data_nascimento !== undefined) vitimaUpdateFields.data_nascimento = updateData.data_nascimento;
+      if (updateData.idade !== undefined) vitimaUpdateFields.idade = updateData.idade;
+      if (updateData.escolaridade !== undefined) vitimaUpdateFields.escolaridade = updateData.escolaridade;
+      if (updateData.etnia !== undefined) vitimaUpdateFields.etnia = updateData.etnia;
+
+      // 1. Atualizar usuário na coleção usuarios
+      if (Object.keys(updateFields).length > 1) { // > 1 porque sempre tem updated_at
+        await this.getCollection().updateOne(
+          { _id: new ObjectId(id), tipo_usuario: "vítima" },
+          { $set: updateFields }
+        );
+      }
+
+      // 2. Atualizar dados da vítima na coleção vitimas
+      if (Object.keys(vitimaUpdateFields).length > 0) {
+        const vitimaCollection = getDb().collection("vitimas");
+        await vitimaCollection.updateOne(
+          { usuario_id: new ObjectId(id) },
+          { $set: vitimaUpdateFields }
+        );
+      }
+
+      // Retornar vítima atualizada
+      return await this.listVitimaById(id);
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async deleteVitima(id: string): Promise<boolean> {
+    try {
+      // 1. Deletar dados da vítima na coleção vitimas
+      const vitimaCollection = getDb().collection("vitimas");
+      await vitimaCollection.deleteOne({ usuario_id: new ObjectId(id) });
+
+      // 2. Deletar usuário na coleção usuarios
+      const result = await this.getCollection().deleteOne({ 
+        _id: new ObjectId(id), 
+        tipo_usuario: "vítima" 
+      });
+      
+      return result.deletedCount > 0;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async listAllVitimas(): Promise<IVitima[]> {
+    try {
+      // Buscar dados específicos de todas as vítimas na coleção vitimas
+      const vitimaCollection = getDb().collection("vitimas");
+      const vitimasData = await vitimaCollection.find({}).toArray();
+
+      // Retornar apenas os dados das vítimas
+      return vitimasData.map(vitima => ({
+        _id: vitima.usuario_id.toString(),
+        endereco: vitima.endereco,
+        data_nascimento: vitima.data_nascimento,
+        idade: vitima.idade,
+        escolaridade: vitima.escolaridade,
+        etnia: vitima.etnia
+      })) as IVitima[];
+    } catch (error) {
+      throw error;
+    }
+  }
+}
+
+export default VitimaService;

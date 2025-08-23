@@ -10,11 +10,5 @@ profissionalRouter.get("/:id", profissionalController.listProfissionalById);
 profissionalRouter.put("/:id", profissionalController.updateProfissional);
 profissionalRouter.delete("/:id", profissionalController.deleteProfissional);
 
-// Rotas específicas para profissionais
-profissionalRouter.get("/especialidade/:escolaridade", profissionalController.getProfissionaisByEspecialidade);
-profissionalRouter.get("/cargo/:cargo", profissionalController.getProfissionaisByCargo);
-profissionalRouter.patch("/:id/especialidade", profissionalController.updateProfissionalEspecialidade);
-profissionalRouter.patch("/:id/cargo", profissionalController.updateProfissionalCargo);
-
 export default profissionalRouter;
 

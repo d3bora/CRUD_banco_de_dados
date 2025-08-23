@@ -1,31 +1,40 @@
 import { Request, Response } from "express";
-import profissionalService from "../services/profissionalService";
+import ProfissionalService from "../services/profissionalService";
+import VitimaService from "../services/vitimaService";
+
+const profissionalService = new ProfissionalService();
+const vitimaService = new VitimaService();
 
 export interface IProfissional {
-  // Campos da tabela profissionalsaude
-  id_profissional: number;
-  numero_registro: string | null;
-  cargo: string | null;
-  especialidade: string | null;
-  
-  // Campos da tabela usuario (herdados)
-  id_usuario: number;
+  _id?: string;
+  numero_registro?: string;
+  cargo?: string;
+  especialidade?: string;
+}
+
+export interface IProfissionalCreate {
+  _id?: string;
   cpf: string;
-  telefone: string | null;
+  telefone?: string;
   senha: string;
   login: string;
-  email: string | null;
-  tipo_usuario: 'vítima' | 'profissional';
-  nome: string | null;
-  sobrenome: string | null;
-  data_cadastro: Date | null;
+  email?: string;
+  tipo_usuario: 'profissional';
+  nome: string;
+  sobrenome: string;
+  data_cadastro: Date;
+  numero_registro: string;
+  cargo: string;
+  especialidade: string;
+  ativo?: boolean;
+  created_at?: Date;
+  updated_at?: Date;
 }
 
 const profissionalController = {
   createProfissional: async (req: Request, res: Response) => {
     try {
       const { 
-        // Dados do usuário
         cpf,
         telefone,
         senha,
@@ -33,47 +42,79 @@ const profissionalController = {
         email,
         nome,
         sobrenome,
-        data_cadastro,
-        // Dados do profissional
         numero_registro,
         cargo,
         especialidade
       } = req.body;
 
-      // Dados do usuário
-      const usuarioData = {
+      // Validações básicas
+      if (!cpf || !senha || !login || !nome || !sobrenome || !numero_registro || !cargo || !especialidade) {
+        return res.status(400).json({ 
+          message: "Campos obrigatórios: cpf, senha, login, nome, sobrenome, numero_registro, cargo, especialidade" 
+        });
+      }
+
+      // Validar formato do CPF (11 dígitos)
+      if (!/^\d{11}$/.test(cpf)) {
+        return res.status(400).json({ 
+          message: "CPF deve conter exatamente 11 dígitos numéricos" 
+        });
+      }
+
+      // Validar formato do telefone (+55XXXXXXXXXXX)
+      if (telefone && !/^\+55\d{10,11}$/.test(telefone)) {
+        return res.status(400).json({ 
+          message: "Telefone deve ter formato +55XXXXXXXXXXX" 
+        });
+      }
+
+      // Validar formato do email
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ 
+          message: "Formato de email inválido" 
+        });
+      }
+
+      // Dados do usuário profissional
+      const profissionalData: IProfissionalCreate = {
         cpf,
         telefone,
         senha,
         login,
         email,
-        tipo_usuario: 'profissional' as const,
+        tipo_usuario: 'profissional',
         nome,
         sobrenome,
-        data_cadastro: data_cadastro || new Date()
-      };
-
-      // Dados do profissional
-      const profissionalData = {
         numero_registro,
         cargo,
-        especialidade
+        especialidade,
+        data_cadastro: new Date(),
+        ativo: true,
+        created_at: new Date(),
+        updated_at: new Date()
       };
 
-      const createdProfissional = await profissionalService.createProfissional(usuarioData, profissionalData);
+      const createdProfissional = await profissionalService.createProfissional(profissionalData);
 
       return res.status(201).json({ 
-        message: "Usuário e profissional criados com sucesso",
+        message: "Profissional criado com sucesso",
         profissional: createdProfissional 
       });
     } catch (error: any) {
-      return res.status(400).json({ message: error.message });
+      console.error('Erro ao criar profissional:', error);
+      return res.status(400).json({ 
+        message: error.message || "Erro interno ao criar profissional"
+      });
     }
   },
 
   listProfissionalById: async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = req.params.id;
+
+      if (!id) {
+        return res.status(400).json({ message: "ID do profissional é obrigatório" });
+      }
 
       const profissional: IProfissional | undefined = await profissionalService.listProfissionalById(id);
       
@@ -81,26 +122,46 @@ const profissionalController = {
         return res.status(404).json({ message: "Profissional não encontrado" });
       }
       
-      return res.status(200).json(profissional);
+      return res.status(200).json({
+        message: "Profissional encontrado com sucesso",
+        profissional
+      });
     } catch (error: any) {
-      return res.status(400).json({ message: error.message });
+      console.error('Erro ao buscar profissional:', error);
+      return res.status(400).json({ 
+        message: error.message || "Erro interno ao buscar profissional"
+      });
     }
   },
 
   updateProfissional: async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = req.params.id;
       const { 
+        telefone,
+        email,
+        nome,
+        sobrenome,
         numero_registro,
         cargo,
         especialidade
       } = req.body;
 
+      if (!id) {
+        return res.status(400).json({ message: "ID do profissional é obrigatório" });
+      }
+
       const updatedProfissional = await profissionalService.updateProfissional(
         id,
-        numero_registro,
-        cargo,
-        especialidade
+        {
+          telefone,
+          email,
+          nome,
+          sobrenome,
+          numero_registro,
+          cargo,
+          especialidade
+        }
       );
       
       if (!updatedProfissional) {
@@ -112,13 +173,20 @@ const profissionalController = {
         profissional: updatedProfissional
       });
     } catch (error: any) {
-      return res.status(400).json({ message: error.message });
+      console.error('Erro ao atualizar profissional:', error);
+      return res.status(400).json({ 
+        message: error.message || "Erro interno ao atualizar profissional"
+      });
     }
   },
 
   deleteProfissional: async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = req.params.id;
+
+      if (!id) {
+        return res.status(400).json({ message: "ID do profissional é obrigatório" });
+      }
 
       const deleted = await profissionalService.deleteProfissional(id);
       
@@ -128,79 +196,27 @@ const profissionalController = {
       
       return res.status(200).json({ message: "Profissional excluído com sucesso" });
     } catch (error: any) {
-      return res.status(400).json({ message: error.message });
+      console.error('Erro ao excluir profissional:', error);
+      return res.status(400).json({ 
+        message: error.message || "Erro interno ao excluir profissional"
+      });
     }
   },
 
   listAllProfissionais: async (req: Request, res: Response) => {
     try {
       const profissionais: IProfissional[] = await profissionalService.listAllProfissionais();
-      return res.status(200).json(profissionais);
-    } catch (error: any) {
-      return res.status(400).json({ message: error.message });
-    }
-  },
 
-  // Métodos específicos para profissionais
-  getProfissionaisByEspecialidade: async (req: Request, res: Response) => {
-    try {
-      const { especialidade } = req.params;
-
-      const profissionais: IProfissional[] = await profissionalService.getProfissionaisByEspecialidade(especialidade);
-      return res.status(200).json(profissionais);
-    } catch (error: any) {
-      return res.status(400).json({ message: error.message });
-    }
-  },
-
-  getProfissionaisByCargo: async (req: Request, res: Response) => {
-    try {
-      const { cargo } = req.params;
-
-      const profissionais: IProfissional[] = await profissionalService.getProfissionaisByCargo(cargo);
-      return res.status(200).json(profissionais);
-    } catch (error: any) {
-      return res.status(400).json({ message: error.message });
-    }
-  },
-
-  updateProfissionalEspecialidade: async (req: Request, res: Response) => {
-    try {
-      const id = parseInt(req.params.id);
-      const { especialidade } = req.body;
-
-      const updatedProfissional = await profissionalService.updateProfissionalEspecialidade(id, especialidade);
-      
-      if (!updatedProfissional) {
-        return res.status(404).json({ message: "Profissional não encontrado" });
-      }
-      
       return res.status(200).json({
-        message: "Especialidade do profissional atualizada com sucesso",
-        profissional: updatedProfissional
+        message: "Profissionais listados com sucesso",
+        profissionais,
+        total: profissionais.length
       });
     } catch (error: any) {
-      return res.status(400).json({ message: error.message });
-    }
-  },
-
-  updateProfissionalCargo: async (req: Request, res: Response) => {
-    try {
-      const id = parseInt(req.params.id);
-      const { cargo } = req.body;
-
-      const updatedProfissional = await profissionalService.updateProfissionalCargo(id, cargo);
-      
-      if (!updatedProfissional) {
-        return res.status(404).json({ message: "Profissional não encontrado" });
-      }
-      
-      return res.status(200).json({
-        message: "Cargo do profissional atualizado com sucesso",
-        profissional: updatedProfissional
+      console.error('Erro ao listar profissionais:', error);
+      return res.status(400).json({ 
+        message: error.message || "Erro interno ao listar profissionais"
       });
-    } catch (error: any) {
-      return res.status(400).json({ message: error.message });
     }
   }
 };

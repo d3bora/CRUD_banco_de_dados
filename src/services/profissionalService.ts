@@ -1,227 +1,211 @@
-import { IProfissional } from "../controllers/profissionalController";
-import { pool } from "../database";
+import { Collection, ObjectId } from "mongodb";
+import { getDb } from "../database";
 
-// Interface para dados do usuário
-interface IUsuario {
+export interface IProfissional {
+  _id?: string;
+  numero_registro?: string;
+  cargo?: string;
+  especialidade?: string;
+}
+
+export interface IProfissionalCreate {
+  _id?: string;
   cpf: string;
-  telefone: string | null;
+  telefone?: string;
   senha: string;
   login: string;
-  email: string | null;
-  tipo_usuario: 'vítima' | 'profissional';
-  nome: string | null;
-  sobrenome: string | null;
-  data_cadastro: Date | null;
+  email?: string;
+  tipo_usuario: 'profissional';
+  nome: string;
+  sobrenome: string;
+  data_cadastro: Date;
+  numero_registro: string;
+  cargo: string;
+  especialidade: string;
+  ativo?: boolean;
+  created_at?: Date;
+  updated_at?: Date;
 }
 
-// Interface para dados do profissional
-interface IProfissionalCreate {
-  numero_registro: string | null;
-  cargo: string | null;
-  especialidade: string | null;
+export interface IProfissionalUpdate {
+  telefone?: string;
+  email?: string;
+  nome?: string;
+  sobrenome?: string;
+  numero_registro?: string;
+  cargo?: string;
+  especialidade?: string;
 }
 
-const profissionalService = {
-  createProfissional: async (
-    usuarioData: IUsuario,
-    profissionalData: IProfissionalCreate
-  ): Promise<IProfissional> => {
-    const client = await pool.connect();
-    
+class ProfissionalService {
+  private collection: Collection | null = null;
+
+  private getCollection(): Collection {
+    if (!this.collection) {
+      this.collection = getDb().collection("usuarios");
+    }
+    return this.collection;
+  }
+
+  async createProfissional(profissionalData: IProfissionalCreate): Promise<IProfissional> {
     try {
-      // Iniciar transação
-      await client.query('BEGIN');
+      // Verificar se CPF já existe
+      const existingProfissional = await this.getCollection().findOne({ cpf: profissionalData.cpf });
+      if (existingProfissional) {
+        throw new Error("CPF já cadastrado no sistema");
+      }
 
-      // 1. Criar usuário primeiro
-      const usuarioResult = await client.query(
-        `INSERT INTO usuario (cpf, telefone, senha, login, email, tipo_usuario, nome, sobrenome, data_cadastro)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id_usuario`,
-        [
-          usuarioData.cpf,
-          usuarioData.telefone,
-          usuarioData.senha,
-          usuarioData.login,
-          usuarioData.email,
-          usuarioData.tipo_usuario,
-          usuarioData.nome,
-          usuarioData.sobrenome,
-          usuarioData.data_cadastro
-        ]
-      );
+      // Verificar se login já existe
+      const existingLogin = await this.getCollection().findOne({ login: profissionalData.login });
+      if (existingLogin) {
+        throw new Error("Login já cadastrado no sistema");
+      }
 
-      const userId = usuarioResult.rows[0].id_usuario;
+      // Verificar se email já existe (se fornecido)
+      if (profissionalData.email) {
+        const existingEmail = await this.getCollection().findOne({ email: profissionalData.email });
+        if (existingEmail) {
+          throw new Error("Email já cadastrado no sistema");
+        }
+      }
 
-      // 2. Criar profissional usando o ID do usuário
-      const profissionalResult = await client.query(
-        `INSERT INTO profissionalsaude (id_profissional, numero_registro, cargo, especialidade)
-         VALUES ($1, $2, $3, $4)
-         RETURNING *`,
-        [
-          userId,
-          profissionalData.numero_registro,
-          profissionalData.cargo,
-          profissionalData.especialidade
-        ]
-      );
+      // 1. Criar usuário na coleção usuarios (dados básicos)
+      const usuarioData = {
+        cpf: profissionalData.cpf,
+        telefone: profissionalData.telefone,
+        senha: profissionalData.senha,
+        login: profissionalData.login,
+        email: profissionalData.email,
+        tipo_usuario: profissionalData.tipo_usuario,
+        nome: profissionalData.nome,
+        sobrenome: profissionalData.sobrenome,
+        data_cadastro: profissionalData.data_cadastro,
+        ativo: profissionalData.ativo,
+        created_at: profissionalData.created_at,
+        updated_at: profissionalData.updated_at
+      };
 
-      // Commit da transação
-      await client.query('COMMIT');
+      const usuarioResult = await this.getCollection().insertOne(usuarioData);
 
-      return profissionalResult.rows[0];
+      // 2. Criar documento na coleção profissionais_saude (dados específicos)
+      const profissionalCollection = getDb().collection("profissionais_saude");
+      const profissionalDoc = {
+        usuario_id: usuarioResult.insertedId,
+        numero_registro: profissionalData.numero_registro,
+        cargo: profissionalData.cargo,
+        especialidade: profissionalData.especialidade
+      };
+
+      await profissionalCollection.insertOne(profissionalDoc);
+
+      // Retornar dados do profissional
+      return { 
+        _id: usuarioResult.insertedId.toString(),
+        numero_registro: profissionalData.numero_registro,
+        cargo: profissionalData.cargo,
+        especialidade: profissionalData.especialidade
+      };
     } catch (error) {
-      // Rollback em caso de erro
-      await client.query('ROLLBACK');
       throw error;
-    } finally {
-      client.release();
-    }
-  },
-
-  listProfissionalById: async (id: number): Promise<IProfissional | undefined> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `SELECT * FROM profissionalsaude WHERE id_profissional = $1`,
-        [id]
-      );
-
-      return result.rows.length > 0 ? result.rows[0] : undefined;
-    } finally {
-      client.release();
-    }
-  },
-
-  updateProfissional: async (
-    id: number,
-    numero_registro: string | null,
-    cargo: string | null,
-    especialidade: string | null
-  ): Promise<IProfissional | undefined> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `UPDATE profissionalsaude 
-         SET numero_registro = $1, cargo = $2, especialidade = $3
-         WHERE id_profissional = $4
-         RETURNING *`,
-        [numero_registro, cargo, especialidade, id]
-      );
-
-      return result.rows.length > 0 ? result.rows[0] : undefined;
-    } finally {
-      client.release();
-    }
-  },
-
-  deleteProfissional: async (id: number): Promise<boolean> => {
-    const client = await pool.connect();
-    
-    try {
-      // Iniciar transação para deletar usuário + profissional
-      await client.query('BEGIN');
-
-      // 1. Deletar profissional primeiro (devido à chave estrangeira)
-      const profissionalResult = await client.query(
-        `DELETE FROM profissionalsaude WHERE id_profissional = $1`,
-        [id]
-      );
-
-      // 2. Deletar usuário
-      const usuarioResult = await client.query(
-        `DELETE FROM usuario WHERE id_usuario = $1`,
-        [id]
-      );
-
-      // Commit da transação
-      await client.query('COMMIT');
-
-      return (profissionalResult.rowCount || 0) > 0;
-    } catch (error) {
-      // Rollback em caso de erro
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  },
-
-  listAllProfissionais: async (): Promise<IProfissional[]> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `SELECT * FROM profissionalsaude`
-      );
-
-      return result.rows;
-    } finally {
-      client.release();
-    }
-  },
-
-  getProfissionaisByEspecialidade: async (especialidade: string): Promise<IProfissional[]> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `SELECT * FROM profissionalsaude WHERE especialidade = $1`,
-        [especialidade]
-      );
-
-      return result.rows;
-    } finally {
-      client.release();
-    }
-  },
-
-  getProfissionaisByCargo: async (cargo: string): Promise<IProfissional[]> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `SELECT * FROM profissionalsaude WHERE cargo = $1`,
-        [cargo]
-      );
-
-      return result.rows;
-    } finally {
-      client.release();
-    }
-  },
-
-  updateProfissionalEspecialidade: async (id: number, especialidade: string): Promise<IProfissional | undefined> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `UPDATE profissionalsaude SET especialidade = $1 WHERE id_profissional = $2 RETURNING *`,
-        [especialidade, id]
-      );
-
-      return result.rows.length > 0 ? result.rows[0] : undefined;
-    } finally {
-      client.release();
-    }
-  },
-
-  updateProfissionalCargo: async (id: number, cargo: string): Promise<IProfissional | undefined> => {
-    const client = await pool.connect();
-    
-    try {
-      const result = await client.query(
-        `UPDATE profissionalsaude SET cargo = $1 WHERE id_profissional = $2 RETURNING *`,
-        [cargo, id]
-      );
-
-      return result.rows.length > 0 ? result.rows[0] : undefined;
-    } finally {
-      client.release();
     }
   }
-};
 
-export default profissionalService;
+  async listProfissionalById(id: string): Promise<IProfissional | undefined> {
+    try {
+      // Buscar dados específicos do profissional na coleção profissionais_saude
+      const profissionalCollection = getDb().collection("profissionais_saude");
+      const profissionalData = await profissionalCollection.findOne({ usuario_id: new ObjectId(id) });
+      
+      if (!profissionalData) return undefined;
+
+      // Retornar dados específicos do profissional
+      return {
+        _id: profissionalData.usuario_id.toString(),
+        numero_registro: profissionalData.numero_registro,
+        cargo: profissionalData.cargo,
+        especialidade: profissionalData.especialidade
+      } as IProfissional;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async updateProfissional(id: string, updateData: IProfissionalUpdate): Promise<IProfissional | undefined> {
+    try {
+      const updateFields: any = { updated_at: new Date() };
+      const profissionalUpdateFields: any = {};
+
+      // Atualizar campos básicos do usuário
+      if (updateData.telefone !== undefined) updateFields.telefone = updateData.telefone;
+      if (updateData.email !== undefined) updateFields.email = updateData.email;
+      if (updateData.nome !== undefined) updateFields.nome = updateData.nome;
+      if (updateData.sobrenome !== undefined) updateFields.sobrenome = updateData.sobrenome;
+
+      // Atualizar campos específicos do profissional
+      if (updateData.numero_registro !== undefined) profissionalUpdateFields.numero_registro = updateData.numero_registro;
+      if (updateData.cargo !== undefined) profissionalUpdateFields.cargo = updateData.cargo;
+      if (updateData.especialidade !== undefined) profissionalUpdateFields.especialidade = updateData.especialidade;
+
+      // 1. Atualizar usuário na coleção usuarios
+      if (Object.keys(updateFields).length > 1) { // > 1 porque sempre tem updated_at
+        await this.getCollection().updateOne(
+          { _id: new ObjectId(id), tipo_usuario: "profissional" },
+          { $set: updateFields }
+        );
+      }
+
+      // 2. Atualizar dados específicos do profissional na coleção profissionais_saude
+      if (Object.keys(profissionalUpdateFields).length > 0) {
+        const profissionalCollection = getDb().collection("profissionais_saude");
+        await profissionalCollection.updateOne(
+          { usuario_id: new ObjectId(id) },
+          { $set: profissionalUpdateFields }
+        );
+      }
+
+      // Retornar profissional atualizado
+      return await this.listProfissionalById(id);
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async deleteProfissional(id: string): Promise<boolean> {
+    try {
+      // 1. Deletar dados do profissional na coleção profissionais_saude
+      const profissionalCollection = getDb().collection("profissionais_saude");
+      await profissionalCollection.deleteOne({ usuario_id: new ObjectId(id) });
+
+      // 2. Deletar usuário na coleção usuarios
+      const result = await this.getCollection().deleteOne({ 
+        _id: new ObjectId(id), 
+        tipo_usuario: "profissional" 
+      });
+      
+      return result.deletedCount > 0;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async listAllProfissionais(): Promise<IProfissional[]> {
+    try {
+      // Buscar dados específicos de todos os profissionais na coleção profissionais_saude
+      const profissionalCollection = getDb().collection("profissionais_saude");
+      const profissionaisData = await profissionalCollection.find({}).toArray();
+
+      // Retornar dados específicos dos profissionais
+      return profissionaisData.map(profissional => ({
+        _id: profissional.usuario_id.toString(),
+        numero_registro: profissional.numero_registro,
+        cargo: profissional.cargo,
+        especialidade: profissional.especialidade
+      })) as IProfissional[];
+    } catch (error) {
+      throw error;
+    }
+  }
+}
+
+export default ProfissionalService;
 
